@@ -1,0 +1,197 @@
+	cseg
+
+; RAM-disk directory erase program
+
+cr	equ	0Dh
+lf	equ	0Ah
+
+wbootv	equ	0
+
+inim:	lxi	h,0080h		; fill the default DMA buffer
+	mvi	c,80h
+fill:	mvi	m,0e5h		; with the E5 pattern
+	inx	h
+	dcr	c
+	jnz	fill
+	mvi	c,12		; disk M:
+	call	seldsk
+	mov	a,h
+	ora	l
+	jz	nodisk
+	mov	e,m		; get the sector translation table address
+	inx	h		; (although very unlikely it will be used)
+	mov	d,m
+	inx	h
+	xchg
+	shld	xlate
+	lxi	h,8		; offset to dpb from xlate
+	dad	d
+	mov	e,m
+	inx	h
+	mov	d,m
+	xchg
+	shld	dpb		; store dpb address
+	mov	e,m
+	inx	h
+	mov	d,m
+	inx	h
+	xchg
+	shld	spt		; save sectors per track
+	xchg
+	mov	b,m		; get block shift
+	mvi	a,1
+shift:	add	a
+	dcr	b
+	jnz	shift
+	sta	spb		; save number of sectors per block
+	lxi	d,7		; point to directory allocation blocks
+	dad	d		; (maybe it would be better just to use
+	mov	d,m		; the number of directory entries/4?)
+	inx	h		; (or maybe just erase the first 16 blocks?)
+	mov	e,m		; note the order: the alloc bitmap contains
+	inx	h		; two 8-bit values, and not a 16-bit word!
+	xchg
+	shld	alloc
+	xchg
+	inx	h
+	inx	h
+	mov	e,m		; get number of reserved tracks
+	inx	h
+	mov	d,m
+	xchg
+	shld	offset
+	shld	track
+	lxi	b,0080h
+	call	setdma		; use the default DMA buffer
+	lxi	h,0
+	shld	sector
+	lhld	spt
+	shld	scnt		; init counter
+	lhld	alloc
+	mvi	e,16		; 16 blocks max
+dloop:	dad	h
+	jnc	skipbl
+	lda	spb
+	mov	d,a
+bloop:	push	h
+	push	d
+	call	seek
+	call	write
+	call	nxtsec
+	pop	d
+	pop	h
+	dcr	d
+	jnz	bloop		; fill block
+nxtbit:	dcr	e
+	jnz	dloop		; check next allocation bit
+	lxi	h,okmsg
+	call	putstr
+exit:	jmp	wbootv		; exit resetting the disk system
+skipbl:	push	h
+	call	nxtsec
+	pop	h
+	dcr	d
+	jnz	skipbl
+	jmp	nxtbit
+
+nodisk:	lxi	h,ndmsg
+	call	putstr
+	jmp	exit
+
+ndmsg:	db	'No RAM disk present',cr,lf,0
+okmsg:	db	'Directory erased',cr,lf,0
+
+putstr:	mov	a,m
+	ora	a
+	rz
+	push	h
+	mov	c,a
+	call	conout
+	pop	h
+	inx	h
+	jmp	putstr
+
+nxtsec:	lhld	sector
+	inx	h
+	shld	sector
+	lhld	scnt
+	dcx	h
+	shld	scnt
+	mov	a,h
+	ora	l
+	rnz
+	lhld	track
+	inx	h
+	shld	track
+	lxi	h,0
+	shld	sector
+	lhld	spt
+	shld	scnt
+	ret
+
+seek:	lhld	track
+	mov	b,h
+	mov	c,l
+	call	settrk
+	lhld	sector
+	mov	b,h
+	mov	c,l
+	lhld	xlate
+	mov	a,h
+	ora	l
+	jz	noxlt
+	xchg			; table address in DE
+	call	sectrn
+	mov	b,h
+	mov	c,l
+noxlt:	call	setsec
+	ret
+
+; ---- BIOS services
+
+conin:	lxi	h,6
+	jmp	biosfn
+
+conout:	lxi	h,9
+	jmp	biosfn
+
+seldsk:	lxi	h,24
+	jmp	biosfn
+
+settrk:	lxi	h,27
+	jmp	biosfn
+
+setsec:	lxi	h,30
+	jmp	biosfn
+
+setdma:	lxi	h,33
+	jmp	biosfn
+
+write:	lxi	h,39
+	jmp	biosfn
+
+sectrn:	lxi	h,45
+biosfn:	push	d
+	xchg
+	lhld	wbootv+1
+	dad	d
+	pop	d
+	pchl
+
+; ---- data area
+
+	dseg
+
+dpb:	ds	2		; disk DPB address
+xlate:	ds	2		; sector translate table address
+offset:	ds	2		; reserved tracks
+spt:	ds	2		; records per track
+spb:	ds	1		; records per block
+alloc:	ds	2		; directory allocation bitmap
+
+sector:	ds	2		; current sector
+track:	ds	2		; current track
+scnt:	ds	2		; sector per track counter
+
+	end	inim
+

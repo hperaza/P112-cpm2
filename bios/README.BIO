@@ -1,0 +1,37 @@
+								10 August 1996
+
+This source is a modification of the initial minimal BIOS for the P112.  It
+contains changes to allow different disk formats, including; Ampro 800kB
+(also called DSQD) 80-track double-sided, double-density; B/P Bios 1.76 MB
+"High-Density" formats, as well as the initial two formats.
+
+It also uses the Non-Volatile Clock RAM parameters if they are valid (the
+utility SETUP.COM was previously uploaded) to set disk step rates and head
+load times, and as an aid in deciphering disk formats.
+
+An assembly of these sources has been combined with images of CCPLUS and
+DOSPLUS along with a boot sector image and a relocation program in the form
+of MOVSYS.COM.  As with the other utilities, it responds with a double-slash
+argument by displaying a help and usage message when invoked as:
+
+		MOVSYS //
+
+This allows constructing a different-sized system, and either loading it
+directly onto the boot tracks, or saving as a file for later patching, such
+as overlaying a new bios assembled at the appropriate starting address.
+
+Also in this package is a minimal program to load the system on the boot
+tracks either from an image in memory (immediately after a "MOVSYS xx *",
+or from a saved image file previously produced by MOVSYS.  This utility is
+PSYSGEN.COM, and again, responds with built-in help and usage if invoked as:
+
+		PSYSGEN //
+
+								25 Feb 2007
+
+The BIOS was further modified to support the following features:
+
+ * a RAM-disk is created out of the extra available memory
+ * the FDC is reset on disk errors so the UZI180 utilities will work
+ * verbose disk error reports
+

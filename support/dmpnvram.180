@@ -1,0 +1,308 @@
+	cseg
+
+	include	Z180.INC
+
+CR	equ	0Dh
+LF	equ	0Ah
+
+BDOS	equ	5
+FCB	equ	5Ch
+
+RTCRst	equ	2		; DS1202 /reset bit
+RTCClk	equ	1		; DS1202 clock bit
+RTCDat	equ	0		; DS1202 data I/O bit
+
+;--------------------------------------------------------------------
+
+start:	ld	(cpmsp),sp
+	ld	sp,stack
+	call	print
+	db	CR,LF,'P112 DS1202 Non-Volatile RAM Dump Program',CR,LF,0
+	call	nvread
+	call	nvdump
+exit:	ld	sp,(cpmsp)
+	ret	
+
+nvread:	ld	hl,nvRam0
+	xor	a
+	ld	b,24
+nv1:	push	af
+	push	bc
+	push	hl
+	call	RdNV
+	pop	hl
+	ld	(hl),a
+	inc	hl
+	pop	bc
+	pop	af
+	inc	a
+	djnz	nv1
+	call	nvcheck
+	jr	z,ChipOK
+	call	print
+	db	CR,LF,7,'No DS1202 chip detected.',CR,LF,0
+	jp	exit
+ChipOK:	call	NVChkS
+	ld	(nvCKS),a
+	ret
+
+nvdump:	call	crlf
+	ld	hl,nvRam0
+	ld	de,0
+	ld	c,3
+loop1:	ex	de,hl
+	call	hlhex
+	ex	de,hl
+	ld	a,':'
+	call	PutChr
+	ld	a,' '
+	call	PutChr
+	ld	b,8
+loop2:	ld	a,(hl)
+	call	ahex
+	ld	a,' '
+	call	PutChr
+	inc	hl
+	inc	de
+	djnz	loop2
+	call	crlf
+	dec	c
+	jr	nz,loop1
+	call	print
+	db	CR,LF,'Checksum = ',0
+	ld	a,(nvCKS)
+	neg
+	call	ahex
+	call	crlf
+	ret
+
+;--------------------------------------------------------------------
+
+NVChkS:	push	bc
+	ld	hl,nvRam0
+	ld	b,23
+	xor	a
+nvchk9:	add	a,(hl)
+	inc	hl
+	djnz	nvchk9
+	pop	bc
+	ret	
+
+;--------------------------------------------------------------------
+
+RdNV:	push	bc
+	add	a,a
+	or	11000001b
+	call	WrCmd
+	di	
+	ld	b,8
+RdNV0:	in0	a,(DRA)		; read port
+	res	RTCClk,a	;  clk LO
+	out0	(DRA),a		;   (set)
+	nop			;    (settle)
+	in0	a,(DRA)		;  read bit to LSB
+	rrca			; data bit to carry
+	rr	c		;  to MSB of accum (C)
+	rlca			; restore parallel port bits
+	set	RTCClk,a	; clk HI
+	out0	(DRA),a		;  (set)
+	djnz	RdNV0		; loop until byte done
+	ei	
+	call	CClose		; deselect chip
+	ld	a,c
+	pop	bc
+	ret	
+
+;--------------------------------------------------------------------
+
+WrDat:	push	af
+	ld	a,b
+	add	a,a
+	or	11000000b
+	call	WrCmd
+	pop	af
+	call	WrDatV
+CClose:	in0	a,(DDRA)
+	set	RTCDat,a	; data line IN
+	out0	(DDRA),a
+	in0	a,(DRA)		; fetch parallel port
+	set	RTCClk,a	;  clk to HI
+	out0	(DRA),a
+	res	RTCRst,a	;   reset active LO
+	out0	(DRA),a
+	ret	
+
+;--------------------------------------------------------------------
+
+WrCmd:	push	af
+	call	COpen
+	pop	af
+WrDatV:	push	bc
+	ld	c,a
+	ld	b,8
+	di	
+	in0	a,(DDRA)	; fetch def'n reg contents
+	res	RTCDat,a	;  data line to output
+	out0	(DDRA),a	;   (set)
+WrCmd0:	in0	a,(DRA)		; read parallel port
+	res	RTCClk,a	;  clk LO
+	out0	(DRA),a		;   (set)
+	srl	a		; clear LSB
+	rr	c		; data byte LSB to carry
+	rla			;  then to parallel port LSB
+	out0	(DRA),a		;   (set)
+	set	RTCClk,a	;  clk HI
+	out0	(DRA),a		;   (set)
+	djnz	WrCmd0		; loop until 8 bits sent
+	in0	a,(DDRA)
+	set	RTCDat,a	; set port to data IN
+	out0	(DDRA),a
+	ei	
+	pop	bc
+	ret	
+
+COpen:	in0	a,(DDRA)	; read settings
+	set	RTCDat,a	;  data line to input
+	out0	(DDRA),a	;   (set)
+	in0	a,(DRA)		; fetch settings
+	res	RTCClk,a	;  clk LO to start
+	out0	(DRA),a		;   (set)
+	set	RTCRst,a	;  clear reset to HI
+	out0	(DRA),a		;   (set)
+	ret	
+
+;--------------------------------------------------------------------
+
+nvcheck:
+	push	bc
+	push	hl
+	ld	hl,nvRam0
+	ld	b,24
+	xor	a
+nvchk1:	or	(hl)
+	inc	hl
+	djnz	nvchk1
+	or	a
+	jr	z,NVBad
+	ld	hl,nvRam0
+	ld	b,24
+	or	0FFh
+nvchk2:	and	(hl)
+	inc	hl
+	djnz	nvchk2
+	inc	a
+	jr	nz,NVGood
+NVBad:	db	0F6h		; ORI - skip next byte
+NVGood:	xor	a
+	pop	hl
+	pop	bc
+	ret	
+
+;--------------------------------------------------------------------
+
+hlhex:	push	af
+	ld	a,h
+	call	ahex
+	ld	a,l
+	call	ahex
+	pop	af
+	ret	
+
+ahex:	push	af
+	rrca	
+	rrca	
+	rrca	
+	rrca	
+	call	hex_nibble
+	pop	af
+	push	af
+	call	hex_nibble
+	pop	af
+	ret	
+
+hex_nibble:
+	and	0Fh
+prnum:	add	a,90h
+	daa	
+	adc	a,40h
+	daa	
+	jr	PutChr
+
+;--------------------------------------------------------------------
+
+print:	ex	(sp),hl
+	call	putstr
+	ex	(sp),hl
+	ret	
+
+putstr:	push	af
+nxtchr:	ld	a,(hl)
+	inc	hl
+	or	a
+	jr	z,endstr
+	call	PutChr
+	jr	nxtchr
+endstr:	pop	af
+	ret	
+
+crlf:	push	af
+	ld	a,CR
+	call	PutChr
+	ld	a,LF
+	call	PutChr
+	pop	af
+	ret	
+
+PutChr:	push	af
+	push	bc
+	push	de
+	push	hl
+	ld	e,a
+	ld	c,2
+	call	BDOS
+	pop	hl
+	pop	de
+	pop	bc
+	pop	af
+	ret	
+
+;--------------------------------------------------------------------
+
+	dseg
+
+; Non-Volatile RAM contents buffer area (24 bytes)
+
+nvRam0:	db	0		; CPU speed, wait states, console rate
+nvRam1:	db	0		; floppy 0 physical params
+	db	0		; floppy 0 timings
+nvRam3:	db	0		; floppy 1 physical params
+	db	0		; floppy 1 timings
+nvRam5:	db	0		; hard disk type
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0
+	db	0		; checksum
+
+nvCKS:	db	0		; computed checksum
+
+	ds	80
+stack	equ	$
+
+cpmsp:	ds 	2
+
+	end	start
+
